@@ -1,0 +1,28 @@
+name: Run Alberta Culinary Scraper
+
+on:
+  schedule:
+    - cron: '0 3 * * 0' # This means "Run every Sunday at 3 AM"
+  workflow_dispatch: # This allows you to run it manually with one click!
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.9'
+
+      - name: Install dependencies
+        run: pip install requests
+
+      - name: Run Scraper
+        env:
+          INGEST_API_KEY: ${{ secrets.INGEST_API_KEY }}
+          YELP_API_KEY: ${{ secrets.YELP_API_KEY }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+        run: python alberta_culinary_scraper.py
