@@ -31,10 +31,27 @@ class AlbertaCulinaryScraper:
         return response.choices[0].message.content
 
     def get_food_image(self, cuisine):
-        keyword = cuisine.split("/")[0].strip().replace(" ", "-").lower()
-        return f"https://source.unsplash.com/800x600/?{keyword},food,restaurant"
+        food_images = {
+            "Upscale Canadian": "https://images.unsplash.com/photo-1414235077428-338989a2e8c0?w=800&h=600&fit=crop",
+            "Alberta Steakhouse": "https://images.unsplash.com/photo-1544025162-d76694265947?w=800&h=600&fit=crop",
+            "Ukrainian / Diner": "https://images.unsplash.com/photo-1504674900247-0877df9cc836?w=800&h=600&fit=crop",
+            "Japanese": "https://images.unsplash.com/photo-1579871494447-9811cf80d66c?w=800&h=600&fit=crop",
+            "Italian": "https://images.unsplash.com/photo-1498050108023-c5249f4df085?w=800&h=600&fit=crop",
+            "French": "https://images.unsplash.com/photo-1555396273-367ea4eb4db5?w=800&h=600&fit=crop",
+            "Mexican": "https://images.unsplash.com/photo-1565299585323-38d6b0865b47?w=800&h=600&fit=crop",
+            "Korean": "https://images.unsplash.com/photo-1590301157890-4810ed352733?w=800&h=600&fit=crop",
+            "Cafe": "https://images.unsplash.com/photo-1495474472287-4d71bcdd2085?w=800&h=600&fit=crop",
+            "Bakery": "https://images.unsplash.com/photo-1509440159596-0249088772ff?w=800&h=600&fit=crop",
+            "Cocktail": "https://images.unsplash.com/photo-1514362545857-3bc16c4c7d1b?w=800&h=600&fit=crop",
+            "Latin": "https://images.unsplash.com/photo-1565299585323-38d6b0865b47?w=800&h=600&fit=crop",
+            "default": "https://images.unsplash.com/photo-1517248135467-4c7edcad34c4?w=800&h=600&fit=crop"
+        }
+        for key in food_images:
+            if key.lower( ) in cuisine.lower():
+                return food_images[key]
+        return food_images["default"]
 
-    def scrub_sources(self ):
+    def scrub_sources(self):
         print(f"[{datetime.now()}] Starting Alberta Culinary Scrub...")
         
         raw_data = [
