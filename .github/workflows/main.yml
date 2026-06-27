@@ -17,10 +17,11 @@ jobs:
         with:
           python-version: '3.9'
 
-      - name: Install dependencies
-        run: pip install requests
+      -       - name: Install dependencies
+        run: pip install requests openai
 
       - name: Run Scraper
+
         env:
           INGEST_API_KEY: ${{ secrets.INGEST_API_KEY }}
           YELP_API_KEY: ${{ secrets.YELP_API_KEY }}
