@@ -7,8 +7,7 @@ from openai import OpenAI
 
 # --- CONFIGURATION ---
 API_ENDPOINT = "https://seo-phase.emergent.host/api/ingest/restaurants"
-# GitHub Secrets will provide these
-API_KEY = os.getenv("INGEST_API_KEY")
+API_KEY = os.getenv("INGEST_API_KEY" )
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 
 client = OpenAI(api_key=OPENAI_API_KEY)
@@ -23,10 +22,8 @@ class AlbertaCulinaryScraper:
         }
 
     def generate_ai_content(self, name, city, cuisine):
-        """Uses AI to write the description and paint the image."""
         print(f"Generating AI content for {name} in {city}...")
         
-        # 1. Rewrite Description
         prompt = f"Write a catchy, 2-sentence description for a restaurant named '{name}' in {city}. It serves {cuisine}. Make it sound like a local Alberta food expert wrote it for a culinary road trip guide. No hashtags."
         response = client.chat.completions.create(
             model="gpt-3.5-turbo",
@@ -34,21 +31,18 @@ class AlbertaCulinaryScraper:
         )
         description = response.choices[0].message.content
 
-        # 2. Paint AI Image
-        image_prompt = f"Professional food photography of a signature dish at '{name}', a {cuisine} restaurant in {city}, Alberta. High-end lighting, appetizing, rustic yet modern atmosphere, 4k resolution."
+        image_prompt = f"Professional food photography of a signature dish at a {cuisine} restaurant, high-end lighting, appetizing, rustic yet modern atmosphere"
         image_response = client.images.generate(
-            model="dall-e-3",
+            model="dall-e-2",
             prompt=image_prompt,
-            size="1024x1024",
-            quality="standard",
-            n=1,
+            size="512x512",
+            n=1
         )
         image_url = image_response.data[0].url
         
         return description, image_url
 
     def scrub_sources(self):
-        """A fresh batch of unique Alberta gems."""
         print(f"[{datetime.now()}] Starting Alberta Culinary Scrub...")
         
         raw_data = [
