@@ -1,28 +1,88 @@
-name: Run Alberta Culinary Scraper
+name: Culinera Scrapling Discovery
 
 on:
   schedule:
-    - cron: '0 3 * * 0'
+    # Twice monthly. UTC: 15:00 is 08:00 or 09:00 in Alberta.
+    - cron: '0 15 1,15 * *'
   workflow_dispatch:
+    inputs:
+      dry_run:
+        description: 'Preview only: do NOT send cards to Culinera'
+        required: true
+        default: true
+        type: boolean
+      discovery_only:
+        description: 'Free crawl check only: no Google, Yelp, AI or ingestion calls'
+        required: true
+        default: false
+        type: boolean
+      scan_all_alberta:
+        description: 'Include both regional API location groups (more API requests)'
+        required: true
+        default: false
+        type: boolean
+
+permissions:
+  contents: read
+
+concurrency:
+  group: culinera-scrapling-discovery
+  cancel-in-progress: false
 
 jobs:
-  build:
+  discover:
     runs-on: ubuntu-latest
+    timeout-minutes: 50
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v3
-
-      - name: Set up Python
-        uses: actions/setup-python@v4
+      - name: Check out repository
+        uses: actions/checkout@v4
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
         with:
-          python-version: '3.9'
-
-      - name: Install dependencies
-        run: pip install requests openai
-
-      - name: Run Scraper
+          python-version: '3.11'
+          cache: pip
+      - name: Install Scrapling and validation dependencies
+        run: python -m pip install -r requirements.txt
+      - name: Restore pending-card and image history
+        uses: actions/cache@v4
+        with:
+          path: .culinera-state
+          key: culinera-history-v3-${{ github.ref_name }}-${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: |
+            culinera-history-v3-${{ github.ref_name }}-
+      - name: Run offline regression tests
+        env:
+          OPENAI_API_KEY: ''
+          GOOGLE_MAPS_API_KEY: ''
+          YELP_API_KEY: ''
+          INGEST_API_KEY: ''
+        run: python -m unittest discover -v
+      - name: Crawl, verify and prepare pending cards
         env:
           INGEST_API_KEY: ${{ secrets.INGEST_API_KEY }}
+          GOOGLE_MAPS_API_KEY: ${{ secrets.GOOGLE_MAPS_API_KEY }}
           YELP_API_KEY: ${{ secrets.YELP_API_KEY }}
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          OPENAI_MODEL: ${{ vars.OPENAI_MODEL || 'gpt-4o-mini' }}
+          LIVE_SUBMISSIONS_ENABLED: ${{ vars.LIVE_SUBMISSIONS_ENABLED || 'false' }}
+          # Scheduled runs are previews until explicitly unlocked in repository variables.
+          DRY_RUN: ${{ (github.event_name == 'workflow_dispatch' && inputs.dry_run) || vars.LIVE_SUBMISSIONS_ENABLED != 'true' }}
+          DISCOVERY_ONLY: ${{ github.event_name == 'workflow_dispatch' && inputs.discovery_only || 'false' }}
+          SCAN_ALL_ALBERTA: ${{ github.event_name == 'workflow_dispatch' && inputs.scan_all_alberta || 'false' }}
+          ENABLE_REGIONAL_API_DISCOVERY: 'true'
+          MAX_PROVIDER_REQUESTS: '180'
+          MAX_CANDIDATES_PER_RUN: '24'
+          MAX_LEADS: '50'
+          MAX_AI_DOCUMENTS: '48'
+          NEWS_LOOKBACK_DAYS: '90'
         run: python alberta_culinary_scraper.py
+      - name: Save reports even when discovery fails
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: culinera-scrapling-report-${{ github.run_number }}
+          path: |
+            culinera_candidates.json
+          if-no-files-found: warn
+          retention-days: 45
+
