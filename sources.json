@@ -1,0 +1,57 @@
+{
+  "crawl": {
+    "max_pages": 90,
+    "max_pages_per_source": 8,
+    "max_depth": 2,
+    "min_domain_delay_seconds": 2.0,
+    "max_elapsed_seconds": 900
+  },
+  "sources_food_news": [
+    {
+      "name": "Only Here for the Food",
+      "root": "https://onlyhereforthefood.ca/",
+      "feed": "https://onlyhereforthefood.ca/feed/"
+    },
+    {
+      "name": "Savour Calgary",
+      "root": "https://savourcalgary.ca/",
+      "feed": "https://savourcalgary.ca/feed/"
+    },
+    {
+      "name": "Avenue Calgary Dining",
+      "root": "https://www.avenuecalgary.com/restaurants-food/",
+      "feed": "https://www.avenuecalgary.com/feed/"
+    },
+    {
+      "name": "Alberta on the Plate",
+      "root": "https://www.albertaontheplate.com/",
+      "feed": "https://www.albertaontheplate.com/feed/"
+    }
+  ],
+  "tourism": [
+    {
+      "name": "Travel Alberta Food and Drink",
+      "root": "https://www.travelalberta.com/things-to-do/food-drink/"
+    },
+    {
+      "name": "Tourism Red Deer",
+      "root": "https://visitreddeer.com/experience-category-detail/restaurants/"
+    },
+    {
+      "name": "Tourism Medicine Hat",
+      "root": "https://www.tourismmedicinehat.com/"
+    },
+    {
+      "name": "Tourism Lethbridge",
+      "root": "https://tourismlethbridge.com/"
+    },
+    {
+      "name": "Grande Prairie Regional Tourism",
+      "root": "https://gptourism.ca/"
+    },
+    {
+      "name": "Lacombe Tourism",
+      "root": "https://lacombetourism.com/"
+    }
+  ]
+}
