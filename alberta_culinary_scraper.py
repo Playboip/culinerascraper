@@ -68,8 +68,11 @@ METRICS = {
     "provider_requests": 0,
     "provider_successes": 0,
     "provider_errors": [],
+    "provider_successes_by_provider": {},
+    "warnings": [],
     "ai_calls": 0,
 }
+YELP_DISABLED_REASON = ""
 CHAIN_NAMES = {
     "a&w",
     "boston pizza",
@@ -232,6 +235,58 @@ REGIONAL_B = [
 
 class PipelineError(RuntimeError):
     pass
+
+
+class ProviderUnavailableError(PipelineError):
+    def __init__(self, provider, status=None, code="", description=""):
+        self.provider, self.status = provider, status
+        self.code, self.description = code, description
+        detail = " ".join(x for x in [code, description] if x)
+        super().__init__(
+            f"{provider} {('HTTP ' + str(status)) if status else 'unavailable'}: {detail}"
+        )
+
+
+def safe_error_text(value):
+    text = str(value or "")
+    for secret in [INGEST_API_KEY, GOOGLE_MAPS_API_KEY, YELP_API_KEY, OPENAI_API_KEY]:
+        if secret:
+            text = text.replace(secret, "[REDACTED]")
+    text = re.sub(r"(?i)Bearer\s+[^\s,;]+", "Bearer [REDACTED]", text)
+    text = re.sub(
+        r"(?i)(api[_-]?key|token|authorization)(\s*[:=]\s*)[^\s,;]+",
+        r"\1\2[REDACTED]",
+        text,
+    )
+    return re.sub(r"\s+", " ", text)[:700]
+
+
+def provider_failure(provider, status=None, code="", description=""):
+    code, description = safe_error_text(code), safe_error_text(description)
+    METRICS.setdefault("provider_errors", []).append(
+        {
+            "provider": provider,
+            "http_status": status,
+            "code": code,
+            "description": description,
+        }
+    )
+    return ProviderUnavailableError(provider, status, code, description)
+
+
+def disable_yelp(error):
+    global YELP_DISABLED_REASON
+    if not (
+        GOOGLE_MAPS_API_KEY
+        and METRICS.get("provider_successes_by_provider", {}).get("Google Places", 0)
+    ):
+        raise PipelineError(
+            f"{error}; no confirmed working Google verifier is available. Nothing will be submitted."
+        ) from None
+    YELP_DISABLED_REASON = safe_error_text(error)
+    message = f"Yelp disabled for this run: {YELP_DISABLED_REASON}. Continuing with confirmed Google verification; all quality/image gates remain."
+    METRICS.setdefault("warnings", []).append(message)
+    LOG.warning(message)
 
 
 def norm(value):
@@ -433,20 +488,44 @@ def provider_request(provider, method, url, **kwargs):
     METRICS["provider_requests"] += 1
     try:
         r = HTTP.request(method, url, timeout=18, **kwargs)
-        if r.status_code in {400, 401, 403, 429}:
-            raise PipelineError(
-                f"{provider} HTTP {r.status_code}; check key, API enablement, request format, billing/quota"
-            )
-        r.raise_for_status()
+    except requests.RequestException as error:
+        raise provider_failure(
+            provider,
+            code=type(error).__name__,
+            description="Network request failed; no response received",
+        ) from None
+    if not 200 <= r.status_code < 300:
+        code, description = "HTTP_ERROR", "No structured error message supplied"
+        try:
+            body = r.json()
+            error = body.get("error", {}) if isinstance(body, dict) else {}
+            if isinstance(error, dict):
+                code = error.get("code") or error.get("status") or code
+                description = (
+                    error.get("description") or error.get("message") or description
+                )
+        except (ValueError, TypeError):
+            pass
+        raise provider_failure(provider, r.status_code, code, description)
+    try:
+        data = r.json()
+        if not isinstance(data, dict):
+            raise ValueError("Unexpected JSON shape")
+        if provider == "Google Places" and "error" in data:
+            raise ValueError("Error object returned instead of search results")
+        if provider == "Yelp" and not isinstance(data.get("businesses"), list):
+            raise ValueError("Missing business results list")
         METRICS["provider_successes"] += 1
-        return r.json()
-    except PipelineError:
-        raise
-    except (requests.RequestException, ValueError) as e:
-        METRICS["provider_errors"].append(
-            {"provider": provider, "error": type(e).__name__}
-        )
-        return {}
+        health = METRICS.setdefault("provider_successes_by_provider", {})
+        health[provider] = health.get(provider, 0) + 1
+        return data
+    except (ValueError, TypeError):
+        raise provider_failure(
+            provider,
+            r.status_code,
+            "INVALID_RESPONSE",
+            "Provider did not return a valid search response",
+        ) from None
 
 
 GOOGLE_FIELDS = ",".join(
@@ -528,10 +607,12 @@ def google_search(query, limit=5):
 
 
 def yelp_search(name="", city="Alberta", hot=False):
-    if not YELP_API_KEY:
+    if not YELP_API_KEY or YELP_DISABLED_REASON:
         return []
     params = {
-        "location": f"{city}, Alberta, Canada",
+        "location": (
+            f"{city}, Alberta, Canada" if city != "Alberta" else "Alberta, Canada"
+        ),
         "categories": "restaurants,foodtrucks,foodtours,breweries,distilleries",
         "limit": 20 if hot else 5,
     }
@@ -539,13 +620,34 @@ def yelp_search(name="", city="Alberta", hot=False):
         params["term"] = name
     if hot:
         params["attributes"] = "hot_and_new"
-    r = provider_request(
-        "Yelp",
-        "GET",
-        "https://api.yelp.com/v3/businesses/search",
-        headers={"Authorization": f"Bearer {YELP_API_KEY}"},
-        params=params,
-    )
+
+    def query(options):
+        return provider_request(
+            "Yelp",
+            "GET",
+            "https://api.yelp.com/v3/businesses/search",
+            headers={"Authorization": f"Bearer {YELP_API_KEY}"},
+            params=options,
+        )
+
+    try:
+        r = query(params)
+    except ProviderUnavailableError as error:
+        if error.status == 400:
+            message = f"{error}; retrying Yelp once without optional category/hot-and-new filters. Broader results are not marked newly opened."
+            METRICS.setdefault("warnings", []).append(message)
+            LOG.warning(message)
+            simpler = {
+                k: v for k, v in params.items() if k not in {"attributes", "categories"}
+            }
+            try:
+                r = query(simpler)
+            except ProviderUnavailableError as retry_error:
+                disable_yelp(retry_error)
+                return []
+        else:
+            disable_yelp(error)
+            return []
     out = []
     for p in r.get("businesses", []):
         loc = p.get("location", {})
@@ -571,6 +673,18 @@ def yelp_search(name="", city="Alberta", hot=False):
             }
         )
     return out
+
+
+def preflight_providers():
+    if not GOOGLE_MAPS_API_KEY and not YELP_API_KEY:
+        raise PipelineError(
+            "No verification provider configured: add GOOGLE_MAPS_API_KEY and/or YELP_API_KEY"
+        )
+    if GOOGLE_MAPS_API_KEY:
+        google_search("restaurant in Edmonton, Alberta", limit=1)
+        LOG.info("Google Places verification endpoint responded successfully")
+    if YELP_API_KEY:
+        yelp_search(city="Edmonton", hot=True)
 
 
 def extra_discovery():
@@ -1032,22 +1146,47 @@ def main():
             )
             report_write(report)
             return 0
-        leads, held = extract_leads(docs)
-        report["held"] += held
         if not OPENAI_API_KEY:
             raise PipelineError(
                 "OPENAI_API_KEY required for original descriptions and image checks; DISCOVERY_ONLY=true runs a free crawl test"
             )
-        if not GOOGLE_MAPS_API_KEY and not YELP_API_KEY:
-            raise PipelineError(
-                "No verification provider configured: add GOOGLE_MAPS_API_KEY and/or YELP_API_KEY"
-            )
+        report["source_documents"] = [
+            {
+                "source": d.get("source_name"),
+                "title": d.get("title"),
+                "url": d.get("url"),
+                "published": d.get("published"),
+            }
+            for d in docs
+        ]
+        report["status"] = "checking_providers"
+        report_write(report)
+        preflight_providers()
+        report["status"] = "extracting_leads"
+        report_write(report)
+        leads, held = extract_leads(docs)
+        report["held"] += held
+        report.update(
+            {
+                "lead_count": len(leads),
+                "discovered_leads": leads,
+                "status": "supplemental_discovery",
+            }
+        )
+        report_write(report)
         leads += extra_discovery()
         store = {}
         for c in leads:
             merge(store.setdefault(key(c), {}), c)
         leads = list(store.values())[:MAX_LEADS]
-        report.update({"lead_count": len(leads), "discovered_leads": leads})
+        report.update(
+            {
+                "lead_count": len(leads),
+                "discovered_leads": leads,
+                "status": "verifying_leads",
+            }
+        )
+        report_write(report)
         r = HTTP.get(DIRECTORY_ENDPOINT, timeout=18)
         r.raise_for_status()
         existing = r.json()

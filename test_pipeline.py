@@ -290,6 +290,8 @@ class MainFlowTests(unittest.TestCase):
             ), patch.object(
                 s, "collect_documents", return_value=([{"title": "fixture"}], {})
             ), patch.object(
+                s, "preflight_providers"
+            ), patch.object(
                 s, "extract_leads", return_value=([c], [])
             ), patch.object(
                 s, "extra_discovery", return_value=[]
@@ -338,6 +340,8 @@ class MainFlowTests(unittest.TestCase):
                 s, "GOOGLE_MAPS_API_KEY", "fixture"
             ), patch.object(
                 s, "collect_documents", return_value=([{"title": "fixture"}], {})
+            ), patch.object(
+                s, "preflight_providers"
             ), patch.object(
                 s, "extract_leads", return_value=([c], [])
             ), patch.object(
