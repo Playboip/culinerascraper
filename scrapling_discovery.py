@@ -24,6 +24,7 @@ from pathlib import Path
 from typing import Any, Iterable
 from urllib.parse import parse_qsl, urlencode, urljoin, urlsplit, urlunsplit
 
+from bs4 import BeautifulSoup
 from scrapling import Selector
 from scrapling.fetchers import Fetcher
 
@@ -627,28 +628,94 @@ def _external_evidence_links(page: Any, page_url: str) -> list[dict[str, str]]:
     return links
 
 
-def _image_options(page: Any, page_url: str) -> list[dict[str, str]]:
-    raw_urls: list[str] = []
-    for selector in (
-        "meta[property='og:image']::attr(content)",
-        "meta[name='twitter:image']::attr(content)",
-        "meta[itemprop='image']::attr(content)",
-        "article img::attr(src)",
-        "main img::attr(src)",
-        "img::attr(data-src)",
-        "img::attr(data-lazy-src)",
-        "img::attr(data-original)",
-        "img::attr(src)",
+def official_page_business_text(html: str) -> str:
+    """Own-site text, excluding review/testimonial widgets; no factual invention."""
+    soup = BeautifulSoup(html or "", "html.parser")
+    descriptions = []
+    for tag in soup.select("meta[name='description'], meta[property='og:description']"):
+        value = tag.get("content", "")
+        if value and value not in descriptions:
+            descriptions.append(value)
+    for tag in list(
+        soup.select("script, style, noscript, iframe, template, form, nav")
     ):
-        try:
-            raw_urls.extend(str(value) for value in page.css(selector).getall())
-        except Exception:
+        tag.decompose()
+    for tag in list(soup.find_all(True)):
+        if tag.parent is None:
             continue
+        identity = " ".join(
+            str(tag.get(name, ""))
+            for name in ("class", "id", "itemprop", "data-widget")
+        )
+        if re.search(
+            r"(?:^|[^a-z])(?:reviews?|testimonials?|reviewers?|ratings?)(?:$|[^a-z])",
+            identity,
+            re.I,
+        ):
+            tag.decompose()
+    body = soup.body or soup
+    text = " ".join(descriptions + [body.get_text(" ", strip=True)])
+    return _normalise_space(text)[:16000]
+
+
+def _photo_url(raw: str, page_url: str) -> str | None:
+    """Keep literal CDN paths/query bytes; canonical page URLs can break them."""
+    literal = unescape(str(raw or "").strip())
+    if not literal:
+        return None
+    candidate = urljoin(page_url, literal)
+    if not _canonical_url(candidate):
+        return None
+    parts = urlsplit(candidate)
+    return urlunsplit((parts.scheme, parts.netloc, parts.path, parts.query, ""))
+
+
+def _srcset_urls(value: str) -> list[str]:
+    # Do not blindly split commas: common Wix/CDN image paths contain them.
+    matches = re.findall(r"(\S+)\s+(\d+(?:\.\d+)?)[wx](?:\s*,\s*|$)", str(value))
+    if matches:
+        return [
+            url.rstrip(",")
+            for url, size in sorted(
+                matches, key=lambda item: float(item[1]), reverse=True
+            )
+        ]
+    return [str(value).strip()] if value and not str(value).startswith("data:") else []
+
+
+def _image_options(page: Any, page_url: str) -> list[dict[str, str]]:
+    soup = BeautifulSoup(_page_html(page), "html.parser")
+    candidates: list[tuple[str, str]] = []
+    for tag in soup.select(
+        "meta[property='og:image'], meta[name='twitter:image'], meta[itemprop='image']"
+    ):
+        candidates.append((tag.get("content", ""), ""))
+    for tag in soup.select("img, picture source"):
+        alt = str(tag.get("alt", ""))[:250]
+        for field in ("srcset", "data-srcset"):
+            candidates.extend((url, alt) for url in _srcset_urls(tag.get(field, "")))
+        for field in ("data-src", "data-lazy-src", "data-original", "src"):
+            candidates.append((tag.get(field, ""), alt))
+    for tag in soup.select("[style], [data-background-image], [data-bg], [data-image]"):
+        for field in ("data-background-image", "data-bg", "data-image"):
+            value = str(tag.get(field, ""))
+            if value and not value.lstrip().startswith(("{", "[")):
+                candidates.append((value, ""))
+        for match in re.finditer(
+            r"url\(\s*['\"]?([^)'\"]+)['\"]?\s*\)", str(tag.get("style", "")), re.I
+        ):
+            candidates.append((match.group(1).strip(), ""))
     options: list[dict[str, str]] = []
     seen: set[str] = set()
-    for raw in raw_urls:
-        absolute = _canonical_url(raw, page_url)
+    for raw, alt in candidates:
+        absolute = _photo_url(raw, page_url)
         if not absolute or absolute in seen:
+            continue
+        path = urlsplit(absolute).path.lower()
+        if path.endswith((".svg", ".ico")) or re.search(
+            r"(?:^|[/_.-])(?:logo|favicon|placeholder|spacer|transparent|icon)(?:$|[/_.-])",
+            path,
+        ):
             continue
         seen.add(absolute)
         options.append(
@@ -656,10 +723,11 @@ def _image_options(page: Any, page_url: str) -> list[dict[str, str]]:
                 "url": absolute,
                 "provider": "official website",
                 "source_page": page_url,
-                "attribution": "Official website page image",
+                "attribution": "Photograph source: official website; permission/photographer unverified",
+                "source_alt": alt,
             }
         )
-        if len(options) == 8:
+        if len(options) >= 16:
             break
     return options
 
@@ -944,6 +1012,7 @@ def fetch_official_page(url: str) -> dict[str, Any] | None:
     return {
         "title": _title(response),
         "text": _container_text(response),
+        "business_text": official_page_business_text(_page_html(response)),
         "html": _page_html(response),
         "url": final_url,
         "image_options": _image_options(response, final_url),
