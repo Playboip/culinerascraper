@@ -65,6 +65,7 @@ jobs:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           OPENAI_MODEL: ${{ vars.OPENAI_MODEL || 'gpt-4o-mini' }}
           LIVE_SUBMISSIONS_ENABLED: ${{ vars.LIVE_SUBMISSIONS_ENABLED || 'false' }}
+          IMAGE_REVIEW_FIELDS_ENABLED: ${{ vars.IMAGE_REVIEW_FIELDS_ENABLED || 'false' }}
           # Scheduled runs are previews until explicitly unlocked in repository variables.
           DRY_RUN: ${{ (github.event_name == 'workflow_dispatch' && inputs.dry_run) || vars.LIVE_SUBMISSIONS_ENABLED != 'true' }}
           DISCOVERY_ONLY: ${{ github.event_name == 'workflow_dispatch' && inputs.discovery_only || 'false' }}
@@ -85,4 +86,3 @@ jobs:
             culinera_candidates.json
           if-no-files-found: warn
           retention-days: 45
-
