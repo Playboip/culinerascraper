@@ -62,6 +62,7 @@ jobs:
           INGEST_API_KEY: ${{ secrets.INGEST_API_KEY }}
           GOOGLE_MAPS_API_KEY: ${{ secrets.GOOGLE_MAPS_API_KEY }}
           YELP_API_KEY: ${{ secrets.YELP_API_KEY }}
+          YELP_ENABLED: ${{ vars.YELP_ENABLED || 'false' }}
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           OPENAI_MODEL: ${{ vars.OPENAI_MODEL || 'gpt-4o-mini' }}
           LIVE_SUBMISSIONS_ENABLED: ${{ vars.LIVE_SUBMISSIONS_ENABLED || 'false' }}
